@@ -39,9 +39,17 @@ RoutingTable::RoutingTable(const std::filesystem::path& routingTablePath) {
 }
 
 std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
-    // TODO: Your code below
-
-    return routingEntries[0]; // Placeholder
+    std::optional<RoutingEntry> bestMatch;
+    uint32_t longestMask = 0;
+    for (const auto& entry : routingEntries) {
+        if ((ip & entry.mask) == (entry.dest & entry.mask)) {
+            if (entry.mask >= longestMask) {
+                longestMask = entry.mask;
+                bestMatch = entry;
+            }
+        }
+    }
+    return bestMatch;
 }
 
 RoutingInterface RoutingTable::getRoutingInterface(const std::string& iface) {

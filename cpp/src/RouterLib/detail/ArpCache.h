@@ -14,7 +14,20 @@
 
 struct ArpEntry {
     std::chrono::steady_clock::time_point timeAdded;
-    // TODO: Fill in this struct... and maybe add more structs
+    mac_addr mac;
+};
+
+struct PendingPacket {
+    Packet packet;
+    std::string iface;
+};
+
+struct ArpRequest {
+    std::vector<PendingPacket> packets;
+    std::chrono::steady_clock::time_point lastSent;
+    int timesSent;
+    
+    ArpRequest() : timesSent(0) {}
 };
 
 class ArpCache {
