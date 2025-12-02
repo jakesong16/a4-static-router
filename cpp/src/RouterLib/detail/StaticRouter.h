@@ -25,6 +25,9 @@ private:
     std::shared_ptr<IPacketSender> packetSender;
 
     std::unique_ptr<ArpCache> arpCache;
+
+    void handleEcho(const std::vector<uint8_t> &packet);
+    void forwardPacket(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, const std::vector<uint8_t> &packet);
 };
 
 
