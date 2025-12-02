@@ -7,6 +7,7 @@
 #include <optional>
 #include <memory>
 #include <mutex>
+#include <vector>  // ADD THIS LINE
 
 #include "IPacketSender.h"
 #include "RouterTypes.h"
@@ -51,6 +52,8 @@ public:
 
 private:
     void loop();
+    void sendArpRequest(uint32_t targetIp, const std::string& iface);  // ADD THIS LINE
+    void sendICMPHostUnreachable(const Packet& originalPacket, const std::string& iface);  // ADD THIS LINE
 
     std::chrono::milliseconds entryTimeout;
     std::chrono::milliseconds tickInterval;
@@ -64,8 +67,7 @@ private:
     std::shared_ptr<IRoutingTable> routingTable;
 
     std::unordered_map<ip_addr, ArpEntry> entries;
+    std::unordered_map<ip_addr, ArpRequest> pendingRequests;  // ADD THIS LINE
 };
-
-
 
 #endif //ARPCACHE_H
