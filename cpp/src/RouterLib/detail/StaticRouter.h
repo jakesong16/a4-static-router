@@ -30,7 +30,8 @@ private:
     void handleEcho(const std::vector<uint8_t> &packet);
     void forwardPacket(std::vector<uint8_t> &packet, std::string &iface);
     void createICMPHeaderTemplate(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::vector<uint8_t> &icmp_packet, std::string &iface);
-    void sendTTLEM(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::string &iface);
+    void sendUnreachable(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::string &iface, uint8_t type, uint8_t code);
+    void sendEchoReply(std::vector<uint8_t> &packet, std::string &iface);
 };
 
 
