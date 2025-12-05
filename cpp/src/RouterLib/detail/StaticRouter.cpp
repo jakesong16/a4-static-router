@@ -47,11 +47,11 @@ void StaticRouter::handleIP(std::vector<uint8_t> &packet, std::string &iface)
         return;
     }
     RoutingInterface routing_interface = routingTable->getRoutingInterface(iface);
-    if(routing_interface.ip != ip_hdr->ip_dst){
+    if(htonl(routing_interface.ip) != ip_hdr->ip_dst){
         forwardIPPacket(packet, iface);
     } else {
-        if(ip_hdr->ip_tos == ip_protocol_tcp || ip_hdr->ip_tos == ip_protocol_udp){
-            sendUnreachable(eth_hdr, ip_hdr, iface, 3, 3); //port unreachable
+        if(ip_hdr->ip_p == ip_protocol_tcp || ip_hdr->ip_p == ip_protocol_udp){
+            sendICMPT3Unreachable(packet, iface, 3);//port unreachable
         } else {
             sr_icmp_hdr * icmp_hdr = reinterpret_cast<sr_icmp_hdr*>(packet.data()+sizeof(sr_ethernet_hdr)+sizeof(sr_ip_hdr));
             if(icmp_hdr->icmp_type == 8 & icmp_hdr->icmp_code == 0){
@@ -67,7 +67,7 @@ void StaticRouter::handleARP(std::vector<uint8_t> &packet, std::string &iface)
     RoutingInterface routing_interface = routingTable->getRoutingInterface(iface);
     if(arp_hdr->ar_tip == routing_interface.ip){
         spdlog::info(
-            "Received quited ARP reply on iface {}: from IP {} to IP {}",
+            "Received ARP reply on iface {}: from IP {} to IP {}",
             iface,
             ntohl(arp_hdr->ar_sip),
             ntohl(arp_hdr->ar_tip),
@@ -139,14 +139,14 @@ void StaticRouter::forwardIPPacket(std::vector<uint8_t> &packet, std::string &if
     ip_hdr->ip_ttl--;
 
     if(ip_hdr->ip_ttl==0){
-        sendUnreachable(eth_hdr, ip_hdr, iface, 11, 0);
+        sendICMPT11Unreachable(packet, iface); //time exceeded
         return;
     }
     ip_hdr->ip_sum = 0;
     ip_hdr->ip_sum = cksum(ip_hdr, sizeof(sr_ip_hdr));
     auto optEntry = routingTable->getRoutingEntry(ip_hdr->ip_dst); 
     if(!optEntry.has_value()){
-        sendUnreachable(eth_hdr, ip_hdr, iface, 3, 0); //Dest net unreachable
+        sendICMPT3Unreachable(packet, iface, 0);//Dest net unreachable
         return;
     }
 
@@ -164,96 +164,149 @@ void StaticRouter::forwardIPPacket(std::vector<uint8_t> &packet, std::string &if
     }
 }
 
-void StaticRouter::createICMPHeaderTemplate(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::vector<uint8_t> &icmp_packet, std::string &iface){
-    
-    
-    sr_ip_hdr *  icmp_ip_hdr = reinterpret_cast<sr_ip_hdr*>(icmp_packet.data()+sizeof(sr_ethernet_hdr));
-    // ICMP_ip_hdr.ip_tos 
-    icmp_ip_hdr->ip_v  =  4;   
-    icmp_ip_hdr->ip_hl = 5;
-    icmp_ip_hdr->ip_tos = 0;
-    icmp_ip_hdr->ip_len = htons(sizeof(sr_ip_hdr) + sizeof(sr_icmp_hdr) + 4 + 8);
-    icmp_ip_hdr->ip_id = 0;
-    icmp_ip_hdr->ip_off = htons(IP_DF);
-    icmp_ip_hdr->ip_ttl = 64;
-    icmp_ip_hdr->ip_p = ip_protocol_icmp;
-    icmp_ip_hdr->ip_src = routingTable->getRoutingInterface(iface).ip;
-    icmp_ip_hdr->ip_dst = ip_hdr->ip_src;
+void StaticRouter::sendEchoReply(const Packet& originalPacket, const std::string& iface){
 
-    
+    const sr_ethernet_hdr_t* origEth = reinterpret_cast<const sr_ethernet_hdr_t*>(originalPacket.data());
+    const sr_ip_hdr_t* origIp = reinterpret_cast<const sr_ip_hdr_t*>(
+        originalPacket.data() + sizeof(sr_ethernet_hdr_t));
 
-    sr_ethernet_hdr *  icmp_eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(icmp_packet.data());
-    mac_addr source_mac = routingTable->getRoutingInterface(iface).mac;
-    std::copy(source_mac.begin(), source_mac.end(), icmp_eth_hdr->ether_shost);
-    // std::copy(std::begin(eth_hdr->ether_shost),
-    //       std::end(eth_hdr->ether_shost),
-    //       ICMP_eth_hdr.ether_dhost);
-    icmp_eth_hdr->ether_type = ethertype_ip;
-
-}
-
-
-void StaticRouter::sendUnreachable(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::string &iface, uint8_t type, uint8_t code){
-    constexpr size_t icmp_payload_len =
-        sizeof(sr_icmp_hdr) + 4 + sizeof(sr_ip_hdr) + 8;
-    constexpr size_t ip_total_len = sizeof(sr_ip_hdr) + icmp_payload_len;
-    std::vector<uint8_t> icmp_packet(sizeof(sr_ethernet_hdr)+ip_total_len, 0);
-
-    createICMPHeaderTemplate(eth_hdr, ip_hdr, icmp_packet, iface);
-
-    
-    sr_icmp_hdr * icmp_hdr = reinterpret_cast<sr_icmp_hdr*>(icmp_packet.data()+sizeof(sr_ethernet_hdr)+sizeof(sr_ip_hdr));
-    icmp_hdr->icmp_type = type;
-    icmp_hdr->icmp_code = code;
-    
-
-    uint8_t* icmp_payload = reinterpret_cast<uint8_t*>(icmp_hdr) + sizeof(sr_icmp_hdr) + 4;
-    std::copy(
-        reinterpret_cast<uint8_t*>(ip_hdr),
-        reinterpret_cast<uint8_t*>(ip_hdr) + sizeof(sr_ip_hdr),
-        icmp_payload
-    );
-    uint8_t* original_payload = reinterpret_cast<uint8_t*>(ip_hdr) + sizeof(sr_ip_hdr);
-    std::copy(
-        original_payload,
-        original_payload + 8,
-        icmp_payload + sizeof(sr_ip_hdr) // write after the 20 bytes
-    );
-
-    icmp_hdr->icmp_sum = 0;
-    icmp_hdr->icmp_sum = cksum(icmp_packet.data()+sizeof(sr_ethernet_hdr_t) +sizeof(sr_ip_hdr),
-                               icmp_packet.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr) - sizeof(sr_icmp_hdr));
-
-    forwardIPPacket(icmp_packet, iface);
-}
-
-void StaticRouter::sendEchoReply(std::vector<uint8_t> &packet, std::string &iface){
-    std::vector<uint8_t> icmp_packet(packet.size());
-    sr_ethernet_hdr * eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(packet.data());
-    sr_ip_hdr * ip_hdr = reinterpret_cast<sr_ip_hdr*>(packet.data()+sizeof(sr_ethernet_hdr));
-    createICMPHeaderTemplate(eth_hdr, ip_hdr, icmp_packet, iface);
+    std::vector<uint8_t> icmpPacket(originalPacket.size());
+    sr_ethernet_hdr * ethHdr = reinterpret_cast<sr_ethernet_hdr*>(icmpPacket.data());
+    sr_ip_hdr * ipHdr = reinterpret_cast<sr_ip_hdr*>(icmpPacket.data()+sizeof(sr_ethernet_hdr));
+    sr_icmp_hdr_t* icmpHdr = reinterpret_cast<sr_icmp_hdr_t*>(
+        icmpPacket.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
+    auto ifaceInfo = routingTable->getRoutingInterface(iface);
+    std::memcpy(ethHdr->ether_dhost, origEth->ether_shost, ETHER_ADDR_LEN);
+    std::memcpy(ethHdr->ether_shost, ifaceInfo.mac.data(), ETHER_ADDR_LEN);
+    ethHdr->ether_type = htons(ethertype_ip);
+    ipHdr->ip_v = 4;
+    ipHdr->ip_hl = 5;
+    ipHdr->ip_tos = 0;
+    ipHdr->ip_len = htons(sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t));
+    ipHdr->ip_id = 0;
+    ipHdr->ip_off = htons(IP_DF);
+    ipHdr->ip_ttl = 65;
+    ipHdr->ip_p = ip_protocol_icmp;
+    ipHdr->ip_src = ifaceInfo.ip;
+    ipHdr->ip_dst = origIp->ip_src;
+    ipHdr->ip_sum = 0;
+    ipHdr->ip_sum = cksum(ipHdr, sizeof(sr_ip_hdr_t));
+    icmpHdr->icmp_type = 0;
+    icmpHdr->icmp_code = 0;
     spdlog::info(
             "Send echo reply from iface {}: from IP {} to IP {}",
             iface,
-            ntohl(ip_hdr->ip_src),
-            ntohl(ip_hdr->ip_dst)
+            ntohl(ipHdr->ip_src),
+            ntohl(ipHdr->ip_dst)
         );
 
-    sr_icmp_hdr * icmp_hdr = reinterpret_cast<sr_icmp_hdr*>(icmp_packet.data()+sizeof(sr_ethernet_hdr)+sizeof(sr_ip_hdr));
-    icmp_hdr->icmp_type = 0;
-    icmp_hdr->icmp_code = 0;  
-
-    uint8_t* icmp_payload = reinterpret_cast<uint8_t*>(icmp_hdr) + sizeof(sr_icmp_hdr) + 4;
+    uint8_t* icmp_payload = reinterpret_cast<uint8_t*>(icmpHdr) + sizeof(sr_icmp_hdr) + 4;
     std::copy(
-        packet.begin() +sizeof(sr_ethernet_hdr) + sizeof(sr_ip_hdr) + sizeof(sr_icmp_hdr),
-        packet.end(),
+        originalPacket.begin() +sizeof(sr_ethernet_hdr) + sizeof(sr_ip_hdr) + sizeof(sr_icmp_hdr),
+        originalPacket.end(),
         icmp_payload
     );
 
-    icmp_hdr->icmp_sum = 0;
-    icmp_hdr->icmp_sum = cksum(icmp_packet.data()+sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr),
-                               icmp_packet.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr));
+    icmpHdr->icmp_sum = 0;
+    icmpHdr->icmp_sum = cksum(icmpPacket.data()+sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr),
+                               icmpPacket.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr));
 
-    forwardIPPacket(icmp_packet, iface);
+    packetSender->sendPacket(icmpPacket, iface);
+}
+
+
+void StaticRouter::sendICMPT3Unreachable(const Packet& originalPacket, const std::string& iface, uint8_t code) {
+    if (originalPacket.size() < sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)) {
+        return;
+    }
+
+    const sr_ethernet_hdr_t* origEth = reinterpret_cast<const sr_ethernet_hdr_t*>(originalPacket.data());
+    const sr_ip_hdr_t* origIp = reinterpret_cast<const sr_ip_hdr_t*>(
+        originalPacket.data() + sizeof(sr_ethernet_hdr_t));
+    size_t packetLen = sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t);
+    std::vector<uint8_t> icmpPacket(packetLen);
+    
+    sr_ethernet_hdr_t* ethHdr = reinterpret_cast<sr_ethernet_hdr_t*>(icmpPacket.data());
+    sr_ip_hdr_t* ipHdr = reinterpret_cast<sr_ip_hdr_t*>(icmpPacket.data() + sizeof(sr_ethernet_hdr_t));
+    sr_icmp_t3_hdr_t* icmpHdr = reinterpret_cast<sr_icmp_t3_hdr_t*>(
+        icmpPacket.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
+
+    try {
+        auto ifaceInfo = routingTable->getRoutingInterface(iface);
+        std::memcpy(ethHdr->ether_dhost, origEth->ether_shost, ETHER_ADDR_LEN);
+        std::memcpy(ethHdr->ether_shost, ifaceInfo.mac.data(), ETHER_ADDR_LEN);
+        ethHdr->ether_type = htons(ethertype_ip);
+        ipHdr->ip_v = 4;
+        ipHdr->ip_hl = 5;
+        ipHdr->ip_tos = 0;
+        ipHdr->ip_len = htons(sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t));
+        ipHdr->ip_id = 0;
+        ipHdr->ip_off = htons(IP_DF);
+        ipHdr->ip_ttl = 65;
+        ipHdr->ip_p = ip_protocol_icmp;
+        ipHdr->ip_src = ifaceInfo.ip;
+        ipHdr->ip_dst = origIp->ip_src;
+        ipHdr->ip_sum = 0;
+        ipHdr->ip_sum = cksum(ipHdr, sizeof(sr_ip_hdr_t));
+        icmpHdr->icmp_type = 3;
+        icmpHdr->icmp_code = 1;
+        icmpHdr->unused = 0;
+        icmpHdr->next_mtu = 0;
+        size_t dataToCopy = std::min(sizeof(icmpHdr->data),
+        originalPacket.size() - sizeof(sr_ethernet_hdr_t));
+        std::memcpy(icmpHdr->data, origIp, dataToCopy);
+        
+        icmpHdr->icmp_sum = 0;
+        icmpHdr->icmp_sum = cksum(icmpHdr, sizeof(sr_icmp_t3_hdr_t));
+        
+        packetSender->sendPacket(icmpPacket, iface);
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to send ICMP host unreachable: {}", e.what());
+    }
+}
+
+void StaticRouter::sendICMPT11Unreachable(const Packet& originalPacket, const std::string& iface) {
+    if (originalPacket.size() < sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)) {
+        return;
+    }
+
+    const sr_ethernet_hdr_t* origEth = reinterpret_cast<const sr_ethernet_hdr_t*>(originalPacket.data());
+    const sr_ip_hdr_t* origIp = reinterpret_cast<const sr_ip_hdr_t*>(
+        originalPacket.data() + sizeof(sr_ethernet_hdr_t));
+    size_t packetLen = sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t);
+    std::vector<uint8_t> icmpPacket(packetLen);
+    
+    sr_ethernet_hdr_t* ethHdr = reinterpret_cast<sr_ethernet_hdr_t*>(icmpPacket.data());
+    sr_ip_hdr_t* ipHdr = reinterpret_cast<sr_ip_hdr_t*>(icmpPacket.data() + sizeof(sr_ethernet_hdr_t));
+    sr_icmp_hdr_t* icmpHdr = reinterpret_cast<sr_icmp_hdr_t*>(
+        icmpPacket.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
+
+    try {
+        auto ifaceInfo = routingTable->getRoutingInterface(iface);
+        std::memcpy(ethHdr->ether_dhost, origEth->ether_shost, ETHER_ADDR_LEN);
+        std::memcpy(ethHdr->ether_shost, ifaceInfo.mac.data(), ETHER_ADDR_LEN);
+        ethHdr->ether_type = htons(ethertype_ip);
+        ipHdr->ip_v = 4;
+        ipHdr->ip_hl = 5;
+        ipHdr->ip_tos = 0;
+        ipHdr->ip_len = htons(sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t));
+        ipHdr->ip_id = 0;
+        ipHdr->ip_off = htons(IP_DF);
+        ipHdr->ip_ttl = 65;
+        ipHdr->ip_p = ip_protocol_icmp;
+        ipHdr->ip_src = ifaceInfo.ip;
+        ipHdr->ip_dst = origIp->ip_src;
+        ipHdr->ip_sum = 0;
+        ipHdr->ip_sum = cksum(ipHdr, sizeof(sr_ip_hdr_t));
+        icmpHdr->icmp_type = 11;
+        icmpHdr->icmp_code = 0;
+        
+        icmpHdr->icmp_sum = 0;
+        icmpHdr->icmp_sum = cksum(icmpHdr, sizeof(sr_icmp_hdr_t));
+        
+        packetSender->sendPacket(icmpPacket, iface);
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to send ICMP host unreachable: {}", e.what());
+    }
 }
 

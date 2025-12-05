@@ -176,7 +176,7 @@ void ArpCache::sendICMPHostUnreachable(const Packet& originalPacket, const std::
         ipHdr->ip_len = htons(sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t));
         ipHdr->ip_id = 0;
         ipHdr->ip_off = htons(IP_DF);
-        ipHdr->ip_ttl = 64;
+        ipHdr->ip_ttl = 65;
         ipHdr->ip_p = ip_protocol_icmp;
         ipHdr->ip_src = ifaceInfo.ip;
         ipHdr->ip_dst = origIp->ip_src;

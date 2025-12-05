@@ -32,10 +32,10 @@ private:
     void handleARP(std::vector<uint8_t> &packet, std::string &iface);
     void forwardIPPacket(std::vector<uint8_t> &packet, std::string &iface);
     void forwardARPPacket(std::vector<uint8_t> &packet, std::string &iface);
-    void createICMPHeaderTemplate(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::vector<uint8_t> &icmp_packet, std::string &iface);
-    void sendUnreachable(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::string &iface, uint8_t type, uint8_t code);
     void generateARPReply(mac_addr target_mac, uint32_t target_ip, std::string &iface);
-    void sendEchoReply(std::vector<uint8_t> &packet, std::string &iface);
+    void sendEchoReply(const Packet& originalPacket, const std::string& iface);
+    void sendICMPT3Unreachable(const Packet& originalPacket, const std::string& iface, uint8_t code);
+    void sendICMPT11Unreachable(const Packet& originalPacket, const std::string& iface);
 };
 
 
