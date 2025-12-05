@@ -39,7 +39,7 @@ void ArpCache::loop() {
 void ArpCache::tick() {
     std::unique_lock lock(mutex);
     auto now = std::chrono::steady_clock::now();
-    std::vector<uint32_t> failedIps;
+    std::vector<uint32_t> eraseIps;
     for (auto& [ip, request] : pendingRequests) {
         auto timeSinceLastSent = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - request.lastSent);
@@ -48,20 +48,20 @@ void ArpCache::tick() {
             if (request.timesSent < 7) {
                 // Send ARP request
                 if (!request.packets.empty()) {
-                    sendArpRequest(ip, request.packets[0].iface);
+                    sendArpRequest(ip, request.packets[0].iFaceTo);
                 }
                 request.lastSent = now;
                 request.timesSent++;
             } else if (request.timesSent >= 7) {
                 // Failed after 7 attempts - send ICMP host unreachable
-                failedIps.push_back(ip);
+                eraseIps.push_back(ip);
                 for (const auto& pending : request.packets) {
-                    sendICMPHostUnreachable(pending.packet, pending.iface);
+                    sendICMPHostUnreachable(pending.packet, pending.iFaceFrom);
                 }
             }
         }
     }
-    for (uint32_t ip : failedIps) {
+    for (uint32_t ip : eraseIps) {
         pendingRequests.erase(ip);
     }
     std::erase_if(entries, [this, now](const auto& entry) {
@@ -83,14 +83,14 @@ void ArpCache::addEntry(uint32_t ip, const mac_addr& mac) {
                 sr_ethernet_hdr_t* ethHdr = reinterpret_cast<sr_ethernet_hdr_t*>(outPacket.data());
                 std::memcpy(ethHdr->ether_dhost, mac.data(), ETHER_ADDR_LEN);
                 try {
-                    auto iface = routingTable->getRoutingInterface(pending.iface);
+                    auto iface = routingTable->getRoutingInterface(pending.iFaceTo);
                     std::memcpy(ethHdr->ether_shost, iface.mac.data(), ETHER_ADDR_LEN);
                 } catch (...) {
-                    spdlog::error("Failed to get interface info for {}", pending.iface);
+                    spdlog::error("Failed to get interface info for {}", pending.iFaceTo);
                     continue;
                 }
                 
-                packetSender->sendPacket(outPacket, pending.iface);
+                packetSender->sendPacket(outPacket, pending.iFaceTo);
             }
         }
         pendingRequests.erase(it);
@@ -113,7 +113,10 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
 
     PendingPacket pending;
     pending.packet = packet;
-    pending.iface = iface;
+    pending.iFaceFrom = iface;
+    const sr_ip_hdr * ip_hdr =  reinterpret_cast<const sr_ip_hdr*>(packet.data() + sizeof(sr_ethernet_hdr_t));
+    auto optEntry = routingTable->getRoutingEntry(ip_hdr->ip_dst); 
+    pending.iFaceTo = optEntry.value().iface;
     auto& request = pendingRequests[ip];
     request.packets.push_back(pending);
     if (request.timesSent == 0) {
@@ -123,6 +126,8 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
 void ArpCache::sendArpRequest(uint32_t targetIp, const std::string& iface) {
     try {
         auto ifaceInfo = routingTable->getRoutingInterface(iface);
+        spdlog::info("sendArpRequest: iface={}, sip={}, tip={}",
+                     iface, ntohl(ifaceInfo.ip), ntohl(targetIp));
         std::vector<uint8_t> arpPacket(sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t));
         sr_ethernet_hdr_t* ethHdr = reinterpret_cast<sr_ethernet_hdr_t*>(arpPacket.data());
         sr_arp_hdr_t* arpHdr = reinterpret_cast<sr_arp_hdr_t*>(arpPacket.data() + sizeof(sr_ethernet_hdr_t));

@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <vector>  // ADD THIS LINE
+#include <queue>
 
 #include "IPacketSender.h"
 #include "RouterTypes.h"
@@ -20,7 +21,8 @@ struct ArpEntry {
 
 struct PendingPacket {
     Packet packet;
-    std::string iface;
+    std::string iFaceFrom;
+    std::string iFaceTo;
 };
 
 struct ArpRequest {

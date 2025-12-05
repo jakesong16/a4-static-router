@@ -27,10 +27,14 @@ private:
 
     std::unique_ptr<ArpCache> arpCache;
 
-    void handleEcho(const std::vector<uint8_t> &packet);
-    void forwardPacket(std::vector<uint8_t> &packet, std::string &iface);
+
+    void handleIP(std::vector<uint8_t> &packet, std::string &iface);
+    void handleARP(std::vector<uint8_t> &packet, std::string &iface);
+    void forwardIPPacket(std::vector<uint8_t> &packet, std::string &iface);
+    void forwardARPPacket(std::vector<uint8_t> &packet, std::string &iface);
     void createICMPHeaderTemplate(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::vector<uint8_t> &icmp_packet, std::string &iface);
     void sendUnreachable(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::string &iface, uint8_t type, uint8_t code);
+    void generateARPReply(mac_addr target_mac, uint32_t target_ip, std::string &iface);
     void sendEchoReply(std::vector<uint8_t> &packet, std::string &iface);
 };
 

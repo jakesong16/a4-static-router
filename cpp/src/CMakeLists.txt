@@ -1,3 +1,4 @@
+# set(CMAKE_BUILD_TYPE Debug) 
 add_subdirectory(RouterLib)
 
 add_executable(StaticRouterClient main.cpp detail/BridgeClient.cpp detail/BridgeSender.cpp detail/PCAPDumper.cpp)

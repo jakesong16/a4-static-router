@@ -26,7 +26,18 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
         return;
     }
 
+
     // TODO: Your code below
+    sr_ethernet_hdr *  eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(packet.data());
+    if(ntohs(eth_hdr->ether_type)==ethertype_arp){
+        handleARP(packet, iface);
+    } else {
+        handleIP(packet, iface);
+    }
+
+}
+void StaticRouter::handleIP(std::vector<uint8_t> &packet, std::string &iface)
+{
     sr_ethernet_hdr *  eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(packet.data());
     sr_ip_hdr * ip_hdr = reinterpret_cast<sr_ip_hdr*>(packet.data() + sizeof(sr_ethernet_hdr_t));
     uint16_t real_cksum = ip_hdr->ip_sum;
@@ -37,7 +48,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
     }
     RoutingInterface routing_interface = routingTable->getRoutingInterface(iface);
     if(routing_interface.ip != ip_hdr->ip_dst){
-        forwardPacket(packet, iface);
+        forwardIPPacket(packet, iface);
     } else {
         if(ip_hdr->ip_tos == ip_protocol_tcp || ip_hdr->ip_tos == ip_protocol_udp){
             sendUnreachable(eth_hdr, ip_hdr, iface, 3, 3); //port unreachable
@@ -48,10 +59,81 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
             }
         }
     }
-
+}
+void StaticRouter::handleARP(std::vector<uint8_t> &packet, std::string &iface)
+{
+    sr_ethernet_hdr *  eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(packet.data());
+    sr_arp_hdr * arp_hdr = reinterpret_cast<sr_arp_hdr*>(packet.data() + sizeof(sr_ethernet_hdr_t));
+    RoutingInterface routing_interface = routingTable->getRoutingInterface(iface);
+    if(arp_hdr->ar_tip == routing_interface.ip){
+        spdlog::info(
+            "Received quited ARP reply on iface {}: from IP {} to IP {}",
+            iface,
+            ntohl(arp_hdr->ar_sip),
+            ntohl(arp_hdr->ar_tip),
+            (ntohs(arp_hdr->ar_op) == arp_op_request ? "request" : "reply")
+        );
+        mac_addr sender_mac;
+        std::copy(arp_hdr->ar_sha, arp_hdr->ar_sha + 6, sender_mac.begin());
+        if(ntohs(arp_hdr->ar_op)==arp_op_request){
+                generateARPReply(sender_mac, arp_hdr->ar_sip, iface);
+        } else {
+                mac_addr sender_mac;
+                std::copy(arp_hdr->ar_sha, arp_hdr->ar_sha + 6, sender_mac.begin());
+                arpCache->addEntry(arp_hdr->ar_sip, sender_mac); 
+        }
+    } else {
+        spdlog::info(
+            "Received unrequited ARP packet on iface {}: from IP {} to IP {} (type={})",
+            iface,
+            ntohl(arp_hdr->ar_sip),
+            ntohl(arp_hdr->ar_tip),
+            (ntohs(arp_hdr->ar_op) == arp_op_request ? "request" : "reply")
+        );
+    }
 }
 
-void StaticRouter::forwardPacket(std::vector<uint8_t> &packet, std::string &iface){
+void StaticRouter::generateARPReply(mac_addr target_mac, uint32_t target_ip, std::string&iface){
+    std::vector<uint8_t> reply_packet(sizeof(sr_ethernet_hdr) + sizeof(sr_arp_hdr));
+    sr_ethernet_hdr *  eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(reply_packet.data());
+    sr_arp_hdr * arp_hdr = reinterpret_cast<sr_arp_hdr*>(reply_packet.data() + sizeof(sr_ethernet_hdr_t));
+    
+    eth_hdr->ether_type = htons(ethertype_arp);
+    RoutingInterface routingInterace = routingTable->getRoutingInterface(iface);
+    mac_addr source_mac = routingInterace.mac;
+    std::copy(
+        source_mac.begin(),
+        source_mac.end(),
+        eth_hdr->ether_shost
+    );
+    std::copy(
+        target_mac.begin(),
+        target_mac.end(),
+        eth_hdr->ether_dhost
+    );
+
+    arp_hdr->ar_hrd = htons(1);            
+    arp_hdr->ar_pro = htons(0x0800);       
+    arp_hdr->ar_hln = 6;
+    arp_hdr->ar_pln = 4;
+    arp_hdr->ar_op  = htons(2);        
+    std::copy(
+        source_mac.begin(),
+        source_mac.end(),
+        arp_hdr->ar_sha
+    );
+    arp_hdr->ar_sip = routingInterace.ip;
+    std::copy(
+        target_mac.begin(),
+        target_mac.end(),
+        arp_hdr->ar_tha
+    );
+    arp_hdr->ar_tip = target_ip;
+
+    packetSender->sendPacket(reply_packet, iface);
+}
+
+void StaticRouter::forwardIPPacket(std::vector<uint8_t> &packet, std::string &iface){
     sr_ethernet_hdr *  eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(packet.data());
     sr_ip_hdr * ip_hdr = reinterpret_cast<sr_ip_hdr*>(packet.data() + sizeof(sr_ethernet_hdr_t));
     ip_hdr->ip_ttl--;
@@ -68,12 +150,16 @@ void StaticRouter::forwardPacket(std::vector<uint8_t> &packet, std::string &ifac
         return;
     }
 
-    auto optMacAddr = arpCache->getEntry(optEntry.value().gateway); //replace with optentry
+    auto optMacAddr = arpCache->getEntry(optEntry.value().gateway); 
     if(!optMacAddr.has_value()){
         arpCache->queuePacket(optEntry.value().gateway, packet, iface);
     } else {
         auto mac = optMacAddr.value();
+        std::copy(eth_hdr->ether_dhost,
+                    eth_hdr->ether_dhost + ETHER_ADDR_LEN,
+                    eth_hdr->ether_shost);
         std::copy(mac.begin(), mac.end(), eth_hdr->ether_dhost);
+
         packetSender->sendPacket(packet, iface);
     }
 }
@@ -83,13 +169,13 @@ void StaticRouter::createICMPHeaderTemplate(sr_ethernet_hdr *  eth_hdr, sr_ip_hd
     
     sr_ip_hdr *  icmp_ip_hdr = reinterpret_cast<sr_ip_hdr*>(icmp_packet.data()+sizeof(sr_ethernet_hdr));
     // ICMP_ip_hdr.ip_tos 
-    icmp_ip_hdr->ip_v  = 4;   
+    icmp_ip_hdr->ip_v  =  4;   
     icmp_ip_hdr->ip_hl = 5;
     icmp_ip_hdr->ip_tos = 0;
     icmp_ip_hdr->ip_len = htons(sizeof(sr_ip_hdr) + sizeof(sr_icmp_hdr) + 4 + 8);
     icmp_ip_hdr->ip_id = 0;
-    icmp_ip_hdr->ip_off = 0;
-    icmp_ip_hdr->ip_ttl = 65;
+    icmp_ip_hdr->ip_off = htons(IP_DF);
+    icmp_ip_hdr->ip_ttl = 64;
     icmp_ip_hdr->ip_p = ip_protocol_icmp;
     icmp_ip_hdr->ip_src = routingTable->getRoutingInterface(iface).ip;
     icmp_ip_hdr->ip_dst = ip_hdr->ip_src;
@@ -105,6 +191,7 @@ void StaticRouter::createICMPHeaderTemplate(sr_ethernet_hdr *  eth_hdr, sr_ip_hd
     icmp_eth_hdr->ether_type = ethertype_ip;
 
 }
+
 
 void StaticRouter::sendUnreachable(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hdr, std::string &iface, uint8_t type, uint8_t code){
     constexpr size_t icmp_payload_len =
@@ -137,7 +224,7 @@ void StaticRouter::sendUnreachable(sr_ethernet_hdr *  eth_hdr, sr_ip_hdr * ip_hd
     icmp_hdr->icmp_sum = cksum(icmp_packet.data()+sizeof(sr_ethernet_hdr_t) +sizeof(sr_ip_hdr),
                                icmp_packet.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr) - sizeof(sr_icmp_hdr));
 
-    forwardPacket(icmp_packet, iface);
+    forwardIPPacket(icmp_packet, iface);
 }
 
 void StaticRouter::sendEchoReply(std::vector<uint8_t> &packet, std::string &iface){
@@ -145,6 +232,12 @@ void StaticRouter::sendEchoReply(std::vector<uint8_t> &packet, std::string &ifac
     sr_ethernet_hdr * eth_hdr = reinterpret_cast<sr_ethernet_hdr*>(packet.data());
     sr_ip_hdr * ip_hdr = reinterpret_cast<sr_ip_hdr*>(packet.data()+sizeof(sr_ethernet_hdr));
     createICMPHeaderTemplate(eth_hdr, ip_hdr, icmp_packet, iface);
+    spdlog::info(
+            "Send echo reply from iface {}: from IP {} to IP {}",
+            iface,
+            ntohl(ip_hdr->ip_src),
+            ntohl(ip_hdr->ip_dst)
+        );
 
     sr_icmp_hdr * icmp_hdr = reinterpret_cast<sr_icmp_hdr*>(icmp_packet.data()+sizeof(sr_ethernet_hdr)+sizeof(sr_ip_hdr));
     icmp_hdr->icmp_type = 0;
@@ -161,6 +254,6 @@ void StaticRouter::sendEchoReply(std::vector<uint8_t> &packet, std::string &ifac
     icmp_hdr->icmp_sum = cksum(icmp_packet.data()+sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr),
                                icmp_packet.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr));
 
-    forwardPacket(icmp_packet, iface);
+    forwardIPPacket(icmp_packet, iface);
 }
 
