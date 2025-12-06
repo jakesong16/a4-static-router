@@ -142,6 +142,7 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
     request.packets.push_back(pending);
     
     if (request.timesSent == 0) {
+        sendArpRequest(ip, pending.iFaceTo);
         request.lastSent = std::chrono::steady_clock::now() - resendInterval;
     }
 }
@@ -150,7 +151,7 @@ void ArpCache::sendArpRequest(uint32_t targetIp, const std::string& iface) {
     try {
         auto ifaceInfo = routingTable->getRoutingInterface(iface);
         
-        spdlog::debug("Sending ARP request: iface={}, sip={}, tip={}",
+        spdlog::info("Sending ARP request: iface={}, sip={}, tip={}",
                      iface, ntohl(ifaceInfo.ip), ntohl(targetIp));
         
         std::vector<uint8_t> arpPacket(sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t));
