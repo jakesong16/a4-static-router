@@ -144,6 +144,7 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
     if (request.timesSent == 0) {
         sendArpRequest(ip, pending.iFaceTo);
         request.lastSent = std::chrono::steady_clock::now() - resendInterval;
+        request.timesSent++;
     }
 }
 
