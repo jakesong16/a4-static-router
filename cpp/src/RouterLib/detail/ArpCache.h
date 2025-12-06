@@ -55,7 +55,7 @@ public:
 private:
     void loop();
     void sendArpRequest(uint32_t targetIp, const std::string& iface);  // ADD THIS LINE
-    void sendICMPHostUnreachable(const Packet& originalPacket, const std::string& iface);  // ADD THIS LINE
+    void sendICMPHostUnreachable(Packet& originalPacket, const std::string& iface);  // ADD THIS LINE
 
     std::chrono::milliseconds entryTimeout;
     std::chrono::milliseconds tickInterval;

@@ -55,7 +55,7 @@ void ArpCache::tick() {
             } else {
                 // Failed after 7 attempts - send ICMP host unreachable
                 eraseIps.push_back(ip);
-                for (const auto& pending : request.packets) {
+                for (auto& pending : request.packets) {
                     sendICMPHostUnreachable(pending.packet, pending.iFaceFrom);
                 }
             }
@@ -143,7 +143,7 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
     
     if (request.timesSent == 0) {
         sendArpRequest(ip, pending.iFaceTo);
-        request.lastSent = std::chrono::steady_clock::now() - resendInterval;
+        request.lastSent = std::chrono::steady_clock::now();
         request.timesSent++;
     }
 }
@@ -182,14 +182,15 @@ void ArpCache::sendArpRequest(uint32_t targetIp, const std::string& iface) {
     }
 }
 
-void ArpCache::sendICMPHostUnreachable(const Packet& originalPacket, const std::string& iface) {
+void ArpCache::sendICMPHostUnreachable(Packet& originalPacket, const std::string& iface) {
     if (originalPacket.size() < sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)) {
         return;
     }
 
     const sr_ethernet_hdr_t* origEth = reinterpret_cast<const sr_ethernet_hdr_t*>(originalPacket.data());
-    const sr_ip_hdr_t* origIp = reinterpret_cast<const sr_ip_hdr_t*>(
+    sr_ip_hdr_t* origIp = reinterpret_cast<sr_ip_hdr_t*>(
         originalPacket.data() + sizeof(sr_ethernet_hdr_t));
+    origIp->ip_ttl++;
     
     size_t packetLen = sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t);
     std::vector<uint8_t> icmpPacket(packetLen);

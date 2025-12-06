@@ -56,16 +56,18 @@ void StaticRouter::handleIP(std::vector<uint8_t> &packet, std::string &iface)
     }
     
     bool destForRouter = false;
+    std::string ifaceTo;
     for (const auto& [ifaceName, ifaceInfo] : routingTable->getRoutingInterfaces()) {
         if (ifaceInfo.ip == ip_hdr->ip_dst) {
             destForRouter = true;
+            ifaceTo = ifaceName;
             break;
         }
     }
 
     if(destForRouter){
         if(ip_hdr->ip_p == ip_protocol_tcp || ip_hdr->ip_p == ip_protocol_udp){
-            sendICMPT3Unreachable(packet, iface, 3);
+            sendICMPT3Unreachable(packet, ifaceTo, 3);
         } else if(ip_hdr->ip_p == ip_protocol_icmp){
             if (packet.size() < sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t)) {
                 return;
@@ -153,12 +155,12 @@ void StaticRouter::forwardIPPacket(std::vector<uint8_t> &packet, std::string &if
     sr_ethernet_hdr_t* eth_hdr = reinterpret_cast<sr_ethernet_hdr_t*>(packet.data());
     sr_ip_hdr_t* ip_hdr = reinterpret_cast<sr_ip_hdr_t*>(packet.data() + sizeof(sr_ethernet_hdr_t));
     
-    if(ip_hdr->ip_ttl <= 1){
-        sendICMPT11Unreachable(packet, iface);
+    ip_hdr->ip_ttl--;
+
+    if(ip_hdr->ip_ttl==0){
+        sendICMPT11Unreachable(packet, iface); //time exceeded
         return;
     }
-    
-    ip_hdr->ip_ttl--;
     
     ip_hdr->ip_sum = 0;
     ip_hdr->ip_sum = cksum(ip_hdr, sizeof(sr_ip_hdr_t));
