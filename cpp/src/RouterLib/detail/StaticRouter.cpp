@@ -147,7 +147,7 @@ void StaticRouter::generateARPReply(mac_addr target_mac, uint32_t target_ip, std
         arp_hdr->ar_sip = routingInterface.ip;
         std::memcpy(arp_hdr->ar_tha, target_mac.data(), ETHER_ADDR_LEN);
         arp_hdr->ar_tip = target_ip;
-
+        spdlog::info("Sending ARP reply");
         packetSender->sendPacket(reply_packet, iface);
     } catch (const std::exception& e) {
         spdlog::error("Error in generateARPReply: {}", e.what());
@@ -189,7 +189,7 @@ void StaticRouter::forwardIPPacket(std::vector<uint8_t> &packet, std::string &if
             
             std::memcpy(eth_hdr->ether_shost, outIfaceInfo.mac.data(), ETHER_ADDR_LEN);
             std::memcpy(eth_hdr->ether_dhost, optMacAddr.value().data(), ETHER_ADDR_LEN);
-
+            spdlog::info("forwarding ip packet");
             packetSender->sendPacket(packet, outIface);
         } catch (const std::exception& e) {
             spdlog::error("Error forwarding packet: {}", e.what());
@@ -227,7 +227,7 @@ void StaticRouter::sendEchoReply(const Packet& originalPacket, const std::string
         icmpHdr->icmp_sum = 0;
         icmpHdr->icmp_sum = cksum(icmpHdr, 
             icmpPacket.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t));
-
+        spdlog::info("sending echo reply");
         packetSender->sendPacket(icmpPacket, iface);
     } catch (const std::exception& e) {
         spdlog::error("Error in sendEchoReply: {}", e.what());
@@ -252,10 +252,10 @@ void StaticRouter::sendICMPT3Unreachable(const Packet& originalPacket, const std
         icmpPacket.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
 
     try {
-        auto ifaceInfo = routingTable->getRoutingInterface(ifaceDest);
-        
+        auto ifaceInfoDest = routingTable->getRoutingInterface(ifaceDest);
+        auto ifaceInfoSrc = routingTable->getRoutingInterface(ifaceSrc);
         std::memcpy(ethHdr->ether_dhost, origEth->ether_shost, ETHER_ADDR_LEN);
-        std::memcpy(ethHdr->ether_shost, ifaceInfo.mac.data(), ETHER_ADDR_LEN);
+        std::memcpy(ethHdr->ether_shost, ifaceInfoSrc.mac.data(), ETHER_ADDR_LEN);
         ethHdr->ether_type = htons(ethertype_ip);
         
         ipHdr->ip_v = 4;
@@ -266,7 +266,7 @@ void StaticRouter::sendICMPT3Unreachable(const Packet& originalPacket, const std
         ipHdr->ip_off = htons(IP_DF);
         ipHdr->ip_ttl = 64;
         ipHdr->ip_p = ip_protocol_icmp;
-        ipHdr->ip_src = ifaceInfo.ip;
+        ipHdr->ip_src = ifaceInfoDest.ip;
         ipHdr->ip_dst = origIp->ip_src;
         ipHdr->ip_sum = 0;
         ipHdr->ip_sum = cksum(ipHdr, sizeof(sr_ip_hdr_t));
@@ -282,7 +282,7 @@ void StaticRouter::sendICMPT3Unreachable(const Packet& originalPacket, const std
         
         icmpHdr->icmp_sum = 0;
         icmpHdr->icmp_sum = cksum(icmpHdr, sizeof(sr_icmp_t3_hdr_t));
-        
+        spdlog::info("Sending T3 unreachable net/port");
         packetSender->sendPacket(icmpPacket, ifaceSrc);
     } catch (const std::exception& e) {
         spdlog::error("Error in sendICMPT3Unreachable: {}", e.what());
@@ -341,7 +341,7 @@ void StaticRouter::sendICMPT11Unreachable(Packet& originalPacket, const std::str
         
         icmpHdr->icmp_sum = 0;
         icmpHdr->icmp_sum = cksum(icmpHdr, sizeof(sr_icmp_t3_hdr_t));
-        
+        spdlog::info("sending time exceeded");
         packetSender->sendPacket(icmpPacket, iface);
     } catch (const std::exception& e) {
         spdlog::error("Error in sendICMPT11Unreachable: {}", e.what());

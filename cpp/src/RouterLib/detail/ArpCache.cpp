@@ -96,7 +96,7 @@ void ArpCache::addEntry(uint32_t ip, const mac_addr& mac) {
                     spdlog::error("Failed to get interface info for {}", pending.iFaceTo);
                     continue;
                 }
-                
+                spdlog::info("sending queuepackets out");
                 packetSender->sendPacket(outPacket, pending.iFaceTo);
             }
         }
@@ -175,7 +175,6 @@ void ArpCache::sendArpRequest(uint32_t targetIp, const std::string& iface) {
         arpHdr->ar_sip = ifaceInfo.ip;
         std::memset(arpHdr->ar_tha, 0x00, ETHER_ADDR_LEN);
         arpHdr->ar_tip = targetIp;
-        
         packetSender->sendPacket(arpPacket, iface);
     } catch (const std::exception& e) {
         spdlog::error("Failed to send ARP request: {}", e.what());
@@ -233,7 +232,7 @@ void ArpCache::sendICMPHostUnreachable(Packet& originalPacket, const std::string
         
         icmpHdr->icmp_sum = 0;
         icmpHdr->icmp_sum = cksum(icmpHdr, sizeof(sr_icmp_t3_hdr_t));
-        
+        spdlog::info("Sending host unreachable");
         packetSender->sendPacket(icmpPacket, iface);
     } catch (const std::exception& e) {
         spdlog::error("Failed to send ICMP host unreachable: {}", e.what());
