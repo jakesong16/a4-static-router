@@ -191,6 +191,8 @@ void ArpCache::sendICMPHostUnreachable(Packet& originalPacket, const std::string
     sr_ip_hdr_t* origIp = reinterpret_cast<sr_ip_hdr_t*>(
         originalPacket.data() + sizeof(sr_ethernet_hdr_t));
     origIp->ip_ttl++;
+    origIp->ip_sum = 0;
+    origIp->ip_sum = cksum(origIp, sizeof(sr_ip_hdr_t));
     
     size_t packetLen = sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_t3_hdr_t);
     std::vector<uint8_t> icmpPacket(packetLen);
